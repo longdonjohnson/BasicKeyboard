@@ -77,6 +77,8 @@ class KeyboardService : InputMethodService() {
     private var isListening = false
     private var typedInput = ""
     private var spokenInput = ""
+    private var spokenInputConfidence = 0.0f
+    private val dictionary = listOf("hello", "world", "android", "keyboard", "swipe", "type", "speech", "text")
 
 
     override fun onCreate() {
@@ -90,18 +92,28 @@ class KeyboardService : InputMethodService() {
             override fun onBeginningOfSpeech() {}
             override fun onRmsChanged(rmsdB: Float) {}
             override fun onBufferReceived(buffer: ByteArray?) {}
-            override fun onEndOfSpeech() {
-                if (isListening) {
-                    speechRecognizer.startListening(speechRecognizerIntent)
-                }
-            }
+            override fun onEndOfSpeech() {}
             override fun onError(error: Int) {
-                Log.e("SpeechRecognizer", "Error: $error")
+                val errorMessage = when (error) {
+                    SpeechRecognizer.ERROR_AUDIO -> "Audio recording error"
+                    SpeechRecognizer.ERROR_CLIENT -> "Client side error"
+                    SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Insufficient permissions"
+                    SpeechRecognizer.ERROR_NETWORK -> "Network error"
+                    SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Network timeout"
+                    SpeechRecognizer.ERROR_NO_MATCH -> "No match"
+                    SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Recognizer busy"
+                    SpeechRecognizer.ERROR_SERVER -> "Error from server"
+                    SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "No speech input"
+                    else -> "Unknown speech recognition error"
+                }
+                Log.e("SpeechRecognizer", "Error: $errorMessage")
             }
             override fun onResults(results: Bundle?) {
                 val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                if (matches != null) {
+                val confidenceScores = results?.getFloatArray(SpeechRecognizer.CONFIDENCE_SCORES)
+                if (matches != null && confidenceScores != null) {
                     spokenInput = matches[0]
+                    spokenInputConfidence = confidenceScores[0]
                     compareAndCommit()
                 }
             }
@@ -234,8 +246,9 @@ class KeyboardService : InputMethodService() {
     }
 
     private fun compareAndCommit() {
-        // TODO: Implement a more sophisticated dictionary and word prediction algorithm.
-        val bestResult = if (typedInput.length > spokenInput.length) {
+        // TODO: Implement a more sophisticated dictionary and confidence scoring logic.
+        val typedInputConfidence = if (dictionary.contains(typedInput.toLowerCase())) 1.0f else 0.0f
+        val bestResult = if (typedInputConfidence > spokenInputConfidence) {
             typedInput
         } else {
             spokenInput
