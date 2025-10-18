@@ -1,6 +1,12 @@
 package com.example.basickeyboard
 
+import android.content.Intent
 import android.inputmethodservice.InputMethodService
+import android.os.Bundle
+import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
+import android.util.Log
 import android.util.TypedValue
 import android.view.View
 import android.widget.Button
@@ -8,8 +14,10 @@ import android.widget.LinearLayout
 
 
 class KeyboardService : InputMethodService() {
-    // Define a mapping of keys to rows
+    private lateinit var speechRecognizer: SpeechRecognizer
+    private lateinit var speechRecognizerIntent: Intent
 
+    // Define a mapping of keys to rows
     private val emojis = "👍😎💩"
     private val lock = "\uD83D\uDD12"
     private val abcLayout = arrayOf(
@@ -17,7 +25,7 @@ class KeyboardService : InputMethodService() {
         arrayOf("@", "q", "w", "e", "r", "t", "y", "u", "i", "o", "p", ":)"),
         arrayOf(lock, "a", "s", "d", "f", "g", "h", "j", "k", "l", "'", " ↵"),
         arrayOf("  ⇧ ", "z", "x", "c", "v", "b", "n", "m", ",", ".", "?", "!" ),
-        arrayOf("123%","(", "                  ",  ")",  emojis)
+        arrayOf("123%","(", "🎤", "                  ",  ")",  emojis)
         // Add other special keys or rows as needed
     )
     private val capsLayout = arrayOf(
@@ -65,7 +73,36 @@ class KeyboardService : InputMethodService() {
     private var currentKeyboardName = "abc"
     private var currentKeyboard = keyboards[currentKeyboardName]!!
     private var nextKeyboard: String? = null
+    private var isListening = false
 
+
+    override fun onCreate() {
+        super.onCreate()
+        speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
+        speechRecognizerIntent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+        speechRecognizerIntent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+        speechRecognizerIntent.putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, packageName)
+        speechRecognizer.setRecognitionListener(object : RecognitionListener {
+            override fun onReadyForSpeech(params: Bundle?) {}
+            override fun onBeginningOfSpeech() {}
+            override fun onRmsChanged(rmsdB: Float) {}
+            override fun onBufferReceived(buffer: ByteArray?) {}
+            override fun onEndOfSpeech() {}
+            override fun onError(error: Int) {
+                Log.e("SpeechRecognizer", "Error: $error")
+            }
+            override fun onResults(results: Bundle?) {
+                val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                if (matches != null) {
+                    // TODO: Implement a more sophisticated confidence-scoring algorithm.
+                    val inputConnection = currentInputConnection
+                    inputConnection?.commitText(matches[0], 1)
+                }
+            }
+            override fun onPartialResults(partialResults: Bundle?) {}
+            override fun onEvent(eventType: Int, params: Bundle?) {}
+        })
+    }
 
     override fun onCreateInputView(): View {
         // Initialize the keyboard layout
@@ -103,6 +140,15 @@ class KeyboardService : InputMethodService() {
                 key.setOnClickListener {
                     val trimmedLabel = keyLabel.trim()
                     when (trimmedLabel) {
+                        "🎤" -> {
+                            if (!isListening) {
+                                speechRecognizer.startListening(speechRecognizerIntent)
+                                isListening = true
+                            } else {
+                                speechRecognizer.stopListening()
+                                isListening = false
+                            }
+                        }
                         "⇧" -> switchKeyboard(if (currentKeyboardName == lock) "abc" else lock, currentKeyboardName == "abc")
                         "123%" -> switchKeyboard("123%")
                         "abc" -> switchKeyboard("abc")
@@ -173,5 +219,4 @@ class KeyboardService : InputMethodService() {
         val inputConnection = currentInputConnection
         inputConnection?.deleteSurroundingText(100, 0)
     }
-
 }
