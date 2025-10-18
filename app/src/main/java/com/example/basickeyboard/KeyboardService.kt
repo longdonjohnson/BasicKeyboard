@@ -8,6 +8,7 @@ import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.util.Log
 import android.util.TypedValue
+import android.view.MotionEvent
 import android.view.View
 import android.widget.Button
 import android.widget.LinearLayout
@@ -74,6 +75,8 @@ class KeyboardService : InputMethodService() {
     private var currentKeyboard = keyboards[currentKeyboardName]!!
     private var nextKeyboard: String? = null
     private var isListening = false
+    private var typedInput = ""
+    private var spokenInput = ""
 
 
     override fun onCreate() {
@@ -87,16 +90,19 @@ class KeyboardService : InputMethodService() {
             override fun onBeginningOfSpeech() {}
             override fun onRmsChanged(rmsdB: Float) {}
             override fun onBufferReceived(buffer: ByteArray?) {}
-            override fun onEndOfSpeech() {}
+            override fun onEndOfSpeech() {
+                if (isListening) {
+                    speechRecognizer.startListening(speechRecognizerIntent)
+                }
+            }
             override fun onError(error: Int) {
                 Log.e("SpeechRecognizer", "Error: $error")
             }
             override fun onResults(results: Bundle?) {
                 val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                 if (matches != null) {
-                    // TODO: Implement a more sophisticated confidence-scoring algorithm.
-                    val inputConnection = currentInputConnection
-                    inputConnection?.commitText(matches[0], 1)
+                    spokenInput = matches[0]
+                    compareAndCommit()
                 }
             }
             override fun onPartialResults(partialResults: Bundle?) {}
@@ -190,11 +196,18 @@ class KeyboardService : InputMethodService() {
 
             baseLayout.addView(rowLayout)
         }
+
         return baseLayout
     }
 
-
     private fun inputText(text: String) {
+        if (text == " ") {
+            compareAndCommit()
+            typedInput = ""
+            spokenInput = ""
+        } else {
+            typedInput += text
+        }
         val inputConnection = currentInputConnection
         inputConnection?.commitText(text, 1)
         if (nextKeyboard != null) {
@@ -218,5 +231,18 @@ class KeyboardService : InputMethodService() {
     private fun clearText() {
         val inputConnection = currentInputConnection
         inputConnection?.deleteSurroundingText(100, 0)
+    }
+
+    private fun compareAndCommit() {
+        // TODO: Implement a more sophisticated dictionary and word prediction algorithm.
+        val bestResult = if (typedInput.length > spokenInput.length) {
+            typedInput
+        } else {
+            spokenInput
+        }
+
+        val inputConnection = currentInputConnection
+        inputConnection?.deleteSurroundingText(typedInput.length, 0)
+        inputConnection?.commitText(bestResult, 1)
     }
 }
