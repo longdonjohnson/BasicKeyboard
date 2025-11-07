@@ -1,15 +1,24 @@
 package com.example.basickeyboard
 
+import android.content.Intent
 import android.inputmethodservice.InputMethodService
+import android.os.Bundle
+import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
+import android.util.Log
 import android.util.TypedValue
+import android.view.MotionEvent
 import android.view.View
 import android.widget.Button
 import android.widget.LinearLayout
 
 
 class KeyboardService : InputMethodService() {
-    // Define a mapping of keys to rows
+    private lateinit var speechRecognizer: SpeechRecognizer
+    private lateinit var speechRecognizerIntent: Intent
 
+    // Define a mapping of keys to rows
     private val emojis = "👍😎💩"
     private val lock = "\uD83D\uDD12"
     private val abcLayout = arrayOf(
@@ -17,7 +26,7 @@ class KeyboardService : InputMethodService() {
         arrayOf("@", "q", "w", "e", "r", "t", "y", "u", "i", "o", "p", ":)"),
         arrayOf(lock, "a", "s", "d", "f", "g", "h", "j", "k", "l", "'", " ↵"),
         arrayOf("  ⇧ ", "z", "x", "c", "v", "b", "n", "m", ",", ".", "?", "!" ),
-        arrayOf("123%","(", "                  ",  ")",  emojis)
+        arrayOf("123%","(", "🎤", "⚙️", "                  ",  ")",  emojis)
         // Add other special keys or rows as needed
     )
     private val capsLayout = arrayOf(
@@ -65,7 +74,61 @@ class KeyboardService : InputMethodService() {
     private var currentKeyboardName = "abc"
     private var currentKeyboard = keyboards[currentKeyboardName]!!
     private var nextKeyboard: String? = null
+    private var isListening = false
+    private var typedInput = ""
+    private var spokenInput = ""
+    private var spokenInputConfidence = 0.0f
+    private val dictionary = listOf("hello", "world", "android", "keyboard", "swipe", "type", "speech", "text")
 
+
+    override fun onCreate() {
+        super.onCreate()
+        speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
+        speechRecognizerIntent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+        speechRecognizerIntent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+        speechRecognizerIntent.putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, packageName)
+        speechRecognizer.setRecognitionListener(object : RecognitionListener {
+            override fun onReadyForSpeech(params: Bundle?) {}
+            override fun onBeginningOfSpeech() {}
+            override fun onRmsChanged(rmsdB: Float) {}
+            override fun onBufferReceived(buffer: ByteArray?) {}
+            override fun onEndOfSpeech() {
+                // TODO: This is a workaround for continuous listening. A more robust solution is needed.
+                if (isListening) {
+                    speechRecognizer.startListening(speechRecognizerIntent)
+                }
+            }
+            override fun onError(error: Int) {
+                val errorMessage = when (error) {
+                    SpeechRecognizer.ERROR_AUDIO -> "Audio recording error"
+                    SpeechRecognizer.ERROR_CLIENT -> "Client side error"
+                    SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Insufficient permissions"
+                    SpeechRecognizer.ERROR_NETWORK -> "Network error"
+                    SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Network timeout"
+                    SpeechRecognizer.ERROR_NO_MATCH -> "No match"
+                    SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Recognizer busy"
+                    SpeechRecognizer.ERROR_SERVER -> "Error from server"
+                    SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "No speech input"
+                    else -> "Unknown speech recognition error"
+                }
+                Log.e("SpeechRecognizer", "Error: $errorMessage")
+            }
+            override fun onResults(results: Bundle?) {
+                val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                val confidenceScores = results?.getFloatArray(SpeechRecognizer.CONFIDENCE_SCORES)
+                if (matches != null && confidenceScores != null && matches.isNotEmpty() && confidenceScores.isNotEmpty()) {
+                    if (typedInput.isEmpty()) {
+                        currentInputConnection?.commitText(matches[0], 1)
+                    } else {
+                        spokenInput = matches[0]
+                        spokenInputConfidence = confidenceScores[0]
+                    }
+                }
+            }
+            override fun onPartialResults(partialResults: Bundle?) {}
+            override fun onEvent(eventType: Int, params: Bundle?) {}
+        })
+    }
 
     override fun onCreateInputView(): View {
         // Initialize the keyboard layout
@@ -103,6 +166,20 @@ class KeyboardService : InputMethodService() {
                 key.setOnClickListener {
                     val trimmedLabel = keyLabel.trim()
                     when (trimmedLabel) {
+                        "⚙️" -> {
+                            val intent = Intent(this, PermissionActivity::class.java)
+                            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            startActivity(intent)
+                        }
+                        "🎤" -> {
+                            if (!isListening) {
+                                speechRecognizer.startListening(speechRecognizerIntent)
+                                isListening = true
+                            } else {
+                                speechRecognizer.stopListening()
+                                isListening = false
+                            }
+                        }
                         "⇧" -> switchKeyboard(if (currentKeyboardName == lock) "abc" else lock, currentKeyboardName == "abc")
                         "123%" -> switchKeyboard("123%")
                         "abc" -> switchKeyboard("abc")
@@ -144,13 +221,27 @@ class KeyboardService : InputMethodService() {
 
             baseLayout.addView(rowLayout)
         }
+
         return baseLayout
     }
 
-
     private fun inputText(text: String) {
-        val inputConnection = currentInputConnection
-        inputConnection?.commitText(text, 1)
+        if (!isListening) {
+            currentInputConnection?.commitText(text, 1)
+        } else {
+            // isListening == true
+            if (text == " ") {
+                // Word is finished
+                compareAndCommit()
+                // also commit the space
+                currentInputConnection?.commitText(" ", 1)
+            } else {
+                typedInput += text
+                // set composing text for immediate feedback
+                currentInputConnection?.setComposingText(typedInput, 1)
+            }
+        }
+
         if (nextKeyboard != null) {
             switchKeyboard(nextKeyboard!!)
         }
@@ -163,6 +254,9 @@ class KeyboardService : InputMethodService() {
         if (selectedText.isNullOrEmpty()) {
             // No text is selected, so delete the character before the cursor
             inputConnection?.deleteSurroundingText(1, 0)
+            if (typedInput.isNotEmpty()) {
+                typedInput = typedInput.substring(0, typedInput.length - 1)
+            }
         } else {
             // Text is selected, so delete the selection
             inputConnection?.commitText("", 1)
@@ -174,4 +268,26 @@ class KeyboardService : InputMethodService() {
         inputConnection?.deleteSurroundingText(100, 0)
     }
 
+    private fun compareAndCommit() {
+        if (typedInput.isEmpty() && spokenInput.isEmpty()) {
+            return
+        }
+
+        // TODO: Implement a more sophisticated dictionary and confidence scoring logic.
+        val typedInputConfidence = if (dictionary.contains(typedInput.lowercase())) 1.0f else 0.0f
+        val bestResult = if (typedInputConfidence > spokenInputConfidence) {
+            typedInput
+        } else {
+            spokenInput
+        }
+
+        val inputConnection = currentInputConnection
+        inputConnection?.setComposingText("", 0)
+        inputConnection?.commitText(bestResult, 1)
+
+        // Reset inputs
+        typedInput = ""
+        spokenInput = ""
+        spokenInputConfidence = 0.0f
+    }
 }
